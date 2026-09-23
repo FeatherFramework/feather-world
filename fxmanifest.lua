@@ -6,7 +6,7 @@ lua54 'yes'
 name 'feather-world'
 description 'World population and map compatibility runtime for Feather Framework'
 author 'Feather Framework'
-version '0.1.0'
+version '0.1.1'
 
 shared_script 'config.lua'
 

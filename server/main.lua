@@ -22,7 +22,12 @@ RegisterCommand('WorldContractSmokeTest', function(source)
     local tests = {
         { 'capabilities', capabilities.ok and capabilities.value.contract == 1 },
         { 'density configuration', density.ok and tonumber(density.value.ambientPeds) ~= nil },
-        { 'defensive snapshot', density.ok and density.value ~= Config.DensityMultipliers }
+        { 'defensive snapshot', density.ok and density.value ~= Config.DensityMultipliers },
+        { 'wagon cleanup configuration', type(Config.WagonFix) == 'table'
+            and type(Config.WagonFix.components) == 'table'
+            and #Config.WagonFix.components > 0
+            and tonumber(Config.WagonFix.checkIntervalMs) ~= nil
+            and tonumber(Config.WagonFix.networkControl.maxAttempts) ~= nil }
     }
     local passed = 0
     for _, test in ipairs(tests) do

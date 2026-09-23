@@ -2,7 +2,23 @@ Config = {
     DevMode = false,
     DisableRandomLootPrompts = true,
     EnableInteriorFixes = true,
-    EnableWagonFix = true,
+    WagonFix = {
+        enabled = true,
+        checkIntervalMs = 1000,
+        orphanCheckIntervalMs = 5000,
+        componentDistance = 3.0,
+        occupantDistance = 5.0,
+        networkControl = {
+            maxAttempts = 50,
+            waitMs = 10
+        },
+        components = {
+            's_wagonprison_lock',
+            's_coachlock02x',
+            'p_wagonprison_lock01x',
+            'p_wagonprison_chain01x'
+        }
+    },
     DensityMultipliers = {
         ambientPeds = 1.0,
         scenarioPeds = 1.0,
