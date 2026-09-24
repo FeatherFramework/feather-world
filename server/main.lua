@@ -23,6 +23,13 @@ RegisterCommand('WorldContractSmokeTest', function(source)
         { 'capabilities', capabilities.ok and capabilities.value.contract == 1 },
         { 'density configuration', density.ok and tonumber(density.value.ambientPeds) ~= nil },
         { 'defensive snapshot', density.ok and density.value ~= Config.DensityMultipliers },
+        { 'interior fix configuration', type(Config.InteriorFix) == 'table'
+            and Config.InteriorFix.enabled == true
+            and Config.InteriorFix.expectedInteriorDefinitions == 35
+            and Config.InteriorFix.expectedInteriorMetadata == 35
+            and Config.InteriorFix.expectedEntitySets == 494
+            and Config.InteriorFix.expectedImapOperations == 400
+            and Config.InteriorFix.expectedImapDescriptions == 217 },
         { 'wagon cleanup configuration', type(Config.WagonFix) == 'table'
             and type(Config.WagonFix.components) == 'table'
             and #Config.WagonFix.components > 0

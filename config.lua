@@ -1,7 +1,15 @@
 Config = {
     DevMode = false,
     DisableRandomLootPrompts = true,
-    EnableInteriorFixes = true,
+    InteriorFix = {
+        enabled = true,
+        startupDelayMs = 1,
+        expectedInteriorDefinitions = 35,
+        expectedInteriorMetadata = 35,
+        expectedEntitySets = 494,
+        expectedImapOperations = 400,
+        expectedImapDescriptions = 217
+    },
     WagonFix = {
         enabled = true,
         checkIntervalMs = 1000,
