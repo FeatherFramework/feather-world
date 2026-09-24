@@ -1,24 +1,42 @@
--- Thin wrappers over minimap/GPS natives: fog-of-war toggle (see
--- Config.UseFogOfWar), radar visibility, and a 2-point GPS route helper.
 MapAPI = {}
+WorldMapRouteActive = false
 
-function MapAPI.setFOW(toggle)
-    SetMinimapHideFow(
-        toggle
-    )
+local function ResultError(code, message)
+    return { ok = false, error = { code = code, message = message } }
 end
 
-function MapAPI.DisplayRadar(toggle)
-    DisplayRadar(toggle)
+local function IsCoordinate(value)
+    local valueType = type(value)
+    if valueType ~= 'table' and valueType ~= 'vector3' then return false end
+    return tonumber(value.x) ~= nil and tonumber(value.y) ~= nil and tonumber(value.z) ~= nil
 end
 
-function MapAPI.StartGps(start, finish)
-    StartGpsMultiRoute(6, true, true)
-    AddPointToGpsMultiRoute(start.x, start.y, start.z)
-    AddPointToGpsMultiRoute(finish.x, finish.y, finish.z)
+function MapAPI.SetFogOfWar(hidden)
+    SetMinimapHideFow(hidden == true)
+    return { ok = true }
+end
+
+function MapAPI.DisplayRadar(visible)
+    DisplayRadar(visible == true)
+    return { ok = true }
+end
+
+function MapAPI.StartGps(startCoords, finishCoords)
+    if not IsCoordinate(startCoords) or not IsCoordinate(finishCoords) then
+        return ResultError('invalid_coordinates', 'Start and finish coordinates are required.')
+    end
+
+    ClearGpsMultiRoute()
+    StartGpsMultiRoute(Config.Map.gpsRouteColor, true, true)
+    AddPointToGpsMultiRoute(startCoords.x, startCoords.y, startCoords.z)
+    AddPointToGpsMultiRoute(finishCoords.x, finishCoords.y, finishCoords.z)
     SetGpsMultiRouteRender(true)
+    WorldMapRouteActive = true
+    return { ok = true }
 end
 
 function MapAPI.StopGps()
     ClearGpsMultiRoute()
+    WorldMapRouteActive = false
+    return { ok = true }
 end
