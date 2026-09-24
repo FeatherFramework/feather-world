@@ -1,165 +1,113 @@
--- Polls RedM's native game-event queue (GET_EVENT_AT_INDEX/GET_EVENT_DATA)
--- every tick and dispatches to whichever Lua callbacks have registered for
--- that event via EventsAPI:RegisterEventListener -- this is how the
--- framework observes native engine events (e.g. entity damage) that don't
--- have a CFX AddEventHandler equivalent. Two independent event groups are
--- polled: 0 = entity/client-side events, 1 = network events (see
--- StartGlobalEventListeners below). Only runs at all while
--- EventListenerCount > 0 or dev mode is on, to avoid an always-on Wait(0)
--- loop doing native calls for nothing.
-EventsAPI = {}
-EventListeners = {}
+local definitionsByName = {}
+local listeners = {}
+local listenerCountsByGroup = {}
+local buffers = {}
+local nextListenerId = 0
+local started = false
+
+WorldEvents = {}
 EventListenerCount = 0
-EventsDevMode = {
-	false,
-	false
-}
 
---? These functions are for DataView memory allocation
-local function pullData(event, eventDataStruct) -- Memory address pull
-    local datafields = {}
+for eventHash, definition in pairs(WorldNativeEventDefinitions) do
+    definition.hash = eventHash
+    definitionsByName[definition.name] = definition
+    listenerCountsByGroup[definition.group] = 0
+end
 
-    for p = 0, event.datasize - 1, 1 do
-        local current_data_element = event.dataelements[p]
-        if current_data_element and current_data_element.type == 'float' then
-            datafields[#datafields + 1] = eventDataStruct:GetFloat32(8 * p) 
-        else
-            --? Defaults to int
-            datafields[#datafields + 1] = eventDataStruct:GetInt32(8 * p) 
-        end
+local function ReadEventData(definition, eventGroup, eventIndex)
+    local buffer = buffers[definition.hash]
+    if not buffer then
+        buffer = WorldEventBuffer.Create(#definition.fields)
+        buffers[definition.hash] = buffer
     end
 
-    return datafields
+    local available = Citizen.InvokeNative(0x57EC5FA4D4D6AFCA, eventGroup, eventIndex, buffer.Buffer(),
+        #definition.fields)
+    if not available then return nil end
+
+    local values = {}
+    for index, fieldType in ipairs(definition.fields) do
+        local offset = index - 1
+        values[index] = fieldType == 'float' and buffer:ReadFloat(offset) or buffer:ReadInt(offset)
+    end
+    return values
 end
 
-local function allocateData(event, eventDataStruct) --memory pre-allocation
-    for p = 0, event.datasize - 1, 1 do
-        local current_data_element = event.dataelements[p]
-        if current_data_element and current_data_element.type == 'float' then
-            eventDataStruct:SetFloat32(8 * p, 0)
-        else
-            --? Defaults to int
-            eventDataStruct:SetInt32(8 * p, 0)
+local function Dispatch(definition, values)
+    local bucket = listeners[definition.hash]
+    if not bucket then return end
+
+    if Config.DevMode then
+        DebugLog('[NativeEvents]', ('dispatch name=%s listeners=%d'):format(definition.name, bucket.count))
+    end
+
+    for _, callback in pairs(bucket.callbacks) do
+        local ok, err = pcall(callback, values)
+        if not ok then
+            print(('[feather-world] native event listener failed name=%s error=%s')
+                :format(definition.name, tostring(err)))
         end
     end
 end
 
---? Global event listener
-local function startGlobalEventListeners(eventgroup)
-	-- Inspired by https://github.com/femga/rdr3_discoveries/tree/master/AI/EVENTS
-	CreateThread(function()
-		while true do
-			Wait(0)
-            local eventmode = eventgroup + 1
-			if EventListenerCount > 0 or EventsDevMode[eventmode] == true then
-				local size = GetNumberOfEvents(eventgroup)
-				if size > 0 then
-					for i = 0, size - 1 do
-						local eventAtIndex = GetEventAtIndex(eventgroup, i)
-						if EVENTS[eventAtIndex] then
-							local eventDataStruct = DataView.ArrayBuffer(8*EVENTS[eventAtIndex].datasize) --memory heap reservation
-
-
-							allocateData(EVENTS[eventAtIndex], eventDataStruct)
-
-							local is_data_exists = Citizen.InvokeNative(0x57EC5FA4D4D6AFCA, eventgroup, i, eventDataStruct:Buffer(),
-								EVENTS[eventAtIndex].datasize) -- GET_EVENT_DATA
-
-							local datafields = {}
-							if is_data_exists then
-                                datafields = pullData(EVENTS[eventAtIndex], eventDataStruct)
-							end
-
-                            if EventsDevMode[eventmode] == true then
-								DebugLog("EVENT TRIGGERED:", EVENTS[eventAtIndex].name, datafields)
-							end
-          
-                            local bucket = EventListeners[eventAtIndex]
-                            if bucket then
-                                for _, event in pairs(bucket.listeners) do
-                                    local ok, err = pcall(event.trigger, datafields)
-                                    if not ok then
-                                        print(('[feather-core] Event listener failed for %s: %s'):format(
-                                            tostring(event.eventname), tostring(err)))
-                                    end
-                                end
-							end
-						end
-					end
-				end
-			end
-		end
-	end)
+local function PollEventGroup(eventGroup)
+    CreateThread(function()
+        while true do
+            if (listenerCountsByGroup[eventGroup] or 0) > 0 then
+                local eventCount = GetNumberOfEvents(eventGroup)
+                for eventIndex = 0, eventCount - 1 do
+                    local definition = WorldNativeEventDefinitions[GetEventAtIndex(eventGroup, eventIndex)]
+                    if definition and listeners[definition.hash] then
+                        local values = ReadEventData(definition, eventGroup, eventIndex)
+                        if values then Dispatch(definition, values) end
+                    end
+                end
+            end
+            Wait(0)
+        end
+    end)
 end
 
-function StartGlobalEventListeners()
-	startGlobalEventListeners(0) -- 0 = Client Side Events
-	startGlobalEventListeners(1) -- 1 = Network Events
-end
+function WorldEvents.Register(eventName, callback)
+    if type(eventName) ~= 'string' or type(callback) ~= 'function' then return nil end
 
---? Register events to be listened for
-function EventsAPI:RegisterEventListener(eventname, cb)
-	if type(eventname) ~= 'string' or type(cb) ~= 'function' then return nil end
-	local key = GetHashKey(eventname)
-	local bucket = EventListeners[key]
-	if not bucket then
-		bucket = { nextId = 0, listeners = {} }
-		EventListeners[key] = bucket
-	end
-	bucket.nextId = bucket.nextId + 1
-	local position = bucket.nextId
-	local owner = GetInvokingResource and GetInvokingResource() or nil
-	if type(owner) ~= 'string' or owner == '' then owner = GetCurrentResourceName() end
-	bucket.listeners[position] = {
-		eventname = eventname,
-		trigger = cb,
-		owner = owner
-	}
+    local definition = definitionsByName[eventName]
+    if not definition then return nil end
+
+    local bucket = listeners[definition.hash]
+    if not bucket then
+        bucket = { count = 0, callbacks = {} }
+        listeners[definition.hash] = bucket
+    end
+
+    nextListenerId = nextListenerId + 1
+    bucket.callbacks[nextListenerId] = callback
+    bucket.count = bucket.count + 1
+    listenerCountsByGroup[definition.group] = listenerCountsByGroup[definition.group] + 1
     EventListenerCount = EventListenerCount + 1
 
-	print("EventListener Registered", eventname);
-	return { key, position }
+    return { hash = definition.hash, id = nextListenerId, group = definition.group }
 end
 
--- remove event listeners is best practice for memory management. however, this only applies if you are creating temporary listeners.
-function EventsAPI:RemoveEventListener(listener)
-	if type(listener) ~= 'table' then return false end
-	local bucket, id = EventListeners[listener[1]], listener[2]
-	if not bucket or id == nil or bucket.listeners[id] == nil then return false end
+function WorldEvents.Remove(handle)
+    if type(handle) ~= 'table' then return false end
 
-	bucket.listeners[id] = nil
+    local bucket = listeners[handle.hash]
+    if not bucket or not bucket.callbacks[handle.id] then return false end
+
+    bucket.callbacks[handle.id] = nil
+    bucket.count = bucket.count - 1
+    listenerCountsByGroup[handle.group] = math.max(0, listenerCountsByGroup[handle.group] - 1)
     EventListenerCount = math.max(0, EventListenerCount - 1)
-	if next(bucket.listeners) == nil then EventListeners[listener[1]] = nil end
-	return true
+    if bucket.count == 0 then listeners[handle.hash] = nil end
+    return true
 end
 
-AddEventHandler('onClientResourceStop', function(resourceName)
-		for eventHash, bucket in pairs(EventListeners) do
-			for id, listener in pairs(bucket.listeners) do
-				if listener.owner == resourceName then
-					bucket.listeners[id] = nil
-					EventListenerCount = math.max(0, EventListenerCount - 1)
-				end
-			end
-			if next(bucket.listeners) == nil then EventListeners[eventHash] = nil end
-		end
-	end)
+function StartNativeEventRuntime()
+    if started then return end
+    started = true
 
--- (Tier 1 audit sweep) The poll loop above reads `EventsDevMode[eventgroup + 1]`
--- (Lua's 1-based indexing on a `{false, false}` literal, which occupies
--- slots 1 and 2, never 0) -- this wrote to `EventsDevMode[0]`/`[1]` instead
--- of `[1]`/`[2]`, so `DevMode('entities')` set a slot nothing ever reads,
--- and `DevMode('network')` set the slot the loop actually reads for
--- *entities* (eventgroup 0 -> index 1). Network logging could never be
--- enabled, and "entities" logging was silently controlled by the
--- 'network' call instead of its own.
-function EventsAPI:DevMode(state, type)
-	if type == 'entities' then
-		EventsDevMode[1] = state
-	elseif type == 'network' then
-		EventsDevMode[2] = state
-	else
-		EventsDevMode[1] = state
-		EventsDevMode[2] = state
-	end
+    for eventGroup in pairs(listenerCountsByGroup) do
+        PollEventGroup(eventGroup)
+    end
 end

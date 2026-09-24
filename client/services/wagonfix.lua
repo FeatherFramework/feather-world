@@ -186,10 +186,12 @@ function StartWagonFix()
         end
     end)
 
-    CreateThread(function()
-        while WagonFixActive do
-            Wait(wagonConfig.orphanCheckIntervalMs)
-            if WagonFixActive then RemoveOrphanedComponents() end
-        end
-    end)
+    if wagonConfig.removeOrphanedComponents then
+        CreateThread(function()
+            while WagonFixActive do
+                Wait(wagonConfig.orphanCheckIntervalMs)
+                if WagonFixActive then RemoveOrphanedComponents() end
+            end
+        end)
+    end
 end
